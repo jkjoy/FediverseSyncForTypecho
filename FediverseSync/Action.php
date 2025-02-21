@@ -280,8 +280,21 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
                     ->where('status = ?', 'publish'));
 
                 if ($post) {
-                    // 构建文章链接
-                    $permalink = Typecho_Common::url('/archives/' . $post['cid'], $options->index);
+                    // 使用 Widget_Abstract_Contents 获取正确的永久链接
+                    $widget = new Widget_Abstract_Contents($this->request, $this->response);
+                    $widget->push($post);
+                    $permalink = $widget->permalink;
+
+                    // 如果上面的方法获取失败，尝试使用路由生成链接
+                    if (empty($permalink)) {
+                        $routeExists = (NULL != Typecho_Router::get('post'));
+                        if ($routeExists) {
+                            $permalink = Typecho_Router::url('post', $post);
+                        } else {
+                            // 如果路由不存在，使用默认格式
+                            $permalink = Typecho_Common::url('/archives/' . $post['cid'] . '.html', $options->siteUrl);
+                        }
+                    }
 
                     // 发送到 Fediverse
                     $response = $sync->postToFediverse([
