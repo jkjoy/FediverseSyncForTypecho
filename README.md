@@ -1,0 +1,2 @@
+# FediverseSyncForTypecho
+一个同步博客文章到联邦宇宙,并获取对应嘟文回复作为文章的评论的Typecho插件
