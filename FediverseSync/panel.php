@@ -86,24 +86,6 @@ include 'menu.php';
     </div>
 </div>
 
-<!-- 添加必要的 JavaScript -->
-<script>
-(function () {
-    // 全选功能
-    $('.typecho-table-select-all').click(function () {
-        var checked = $(this).prop('checked');
-        $('.typecho-list-table input[type="checkbox"]').prop('checked', checked);
-    });
-    
-    // 当选中某个复选框时，更新全选框状态
-    $('.typecho-list-table tbody input[type="checkbox"]').click(function () {
-        var checkedAll = $('.typecho-list-table tbody input[type="checkbox"]').length 
-                        === $('.typecho-list-table tbody input[type="checkbox"]:checked').length;
-        $('.typecho-table-select-all').prop('checked', checkedAll);
-    });
-})();
-</script>
-
 <?php
 include 'footer.php';
 
@@ -116,7 +98,7 @@ function get_posts_for_sync() {
         $posts = $db->fetchAll($db->select('table.contents.cid', 'table.contents.title', 
                                          'table.contents.created', 'table.contents.authorId', 
                                          'table.contents.text', 'table.users.screenName', 
-                                         'table.users.name')
+                                         'table.users.name', 'table.contents.slug', 'table.contents.type')
             ->from('table.contents')
             ->join('table.users', 'table.contents.authorId = table.users.uid')
             ->where('table.contents.type = ?', 'post')
@@ -142,12 +124,25 @@ function get_posts_for_sync() {
             $is_synced = isset($synced_map[$post['cid']]);
             $toot_url = $is_synced ? $synced_map[$post['cid']] : '';
 
+            // 使用 Typecho 路由生成正确的永久链接
+            $pathinfo = [];
+            $pathinfo['slug'] = $post['slug'];
+            $pathinfo['category'] = '';
+            $pathinfo['directory'] = '';
+            $pathinfo['cid'] = $post['cid'];
+            $pathinfo['year'] = date('Y', $post['created']);
+            $pathinfo['month'] = date('m', $post['created']);
+            $pathinfo['day'] = date('d', $post['created']);
+
+            // 获取文章的正确永久链接
+            $permalink = Typecho_Router::url('post', $pathinfo, $options->index);
+
             $result[] = [
                 'cid' => $post['cid'],
                 'title' => $post['title'] ?: _t('无标题'),
                 'author' => $post['screenName'] ?: ($post['name'] ?: _t('未知作者')),
                 'created' => $post['created'],
-                'permalink' => Typecho_Common::url('/archives/' . $post['cid'], $options->index),
+                'permalink' => $permalink,  // 使用正确的永久链接
                 'synced' => $is_synced,
                 'toot_url' => $toot_url
             ];

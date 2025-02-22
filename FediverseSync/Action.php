@@ -95,7 +95,7 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
         }
     }
 
-        /**
+    /**
      * 同步单篇文章
      */
     public function syncSingle()
