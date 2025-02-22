@@ -44,7 +44,8 @@ class FediverseSync_Models_Comment
                 'reply_to_id' => $reply['id'],
                 'content' => $reply['content'],
                 'author' => $reply['account']['display_name'],
-                'author_url' => $reply['account']['url']
+                'author_url' => $reply['account']['url'],
+                'author_avatar' => $reply['account']['avatar']
             ]);
         }
 
