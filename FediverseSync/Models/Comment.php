@@ -41,7 +41,7 @@ class FediverseSync_Models_Comment
             $this->saveComment([
                 'post_id' => $post_id,
                 'toot_id' => $toot['toot_id'],
-                'reply_id' => $reply['id'],
+                'reply_to_id' => $reply['id'],
                 'content' => $reply['content'],
                 'author' => $reply['account']['display_name'],
                 'author_url' => $reply['account']['url']
@@ -59,7 +59,7 @@ class FediverseSync_Models_Comment
         // 检查评论是否已存在
         $existing = $this->db->fetchRow($this->db->select()
             ->from('table.fediverse_comments')
-            ->where('reply_id = ?', $data['reply_id']));
+            ->where('reply_to_id = ?', $data['reply_to_id']));
             
         if ($existing) {
             return;

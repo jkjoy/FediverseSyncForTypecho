@@ -4,9 +4,9 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 /**
  * Fediverse Sync for Typecho
  * 将新文章自动同步到 Mastodon/GoToSocial 实例
- * 
+ * 并使用 Fediverse 的回复作为文章评论
  * @package FediverseSync 
- * @version 1.1.1
+ * @version 1.1.2
  * @author jkjoy
  * @link https://github.com/jkjoy
  */
@@ -49,12 +49,10 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                     `author` varchar(255) NOT NULL,
                     `author_url` varchar(512) DEFAULT NULL,
                     `author_avatar` varchar(512) DEFAULT NULL,
-                    `instance_url` varchar(255) NOT NULL,
                     `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     `synced_at` timestamp NULL DEFAULT NULL,
                     `status` varchar(32) DEFAULT 'pending',
                     PRIMARY KEY (`id`),
-                    UNIQUE KEY `uk_toot_instance` (`toot_id`, `instance_url`),
                     KEY `idx_post_id` (`post_id`),
                     KEY `idx_comment_id` (`comment_id`),
                     KEY `idx_reply_to_id` (`reply_to_id`),
@@ -101,12 +99,10 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                     `author` VARCHAR(255) NOT NULL,
                     `author_url` VARCHAR(512),
                     `author_avatar` VARCHAR(512),
-                    `instance_url` VARCHAR(255) NOT NULL,
                     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     `synced_at` TIMESTAMP,
                     `status` VARCHAR(32) DEFAULT 'pending'
                 );",
-                "CREATE UNIQUE INDEX IF NOT EXISTS `uk_toot_instance` ON `{$prefix}fediverse_comments` (`toot_id`, `instance_url`);",
                 "CREATE INDEX IF NOT EXISTS `idx_comments_post_id` ON `{$prefix}fediverse_comments` (`post_id`);",
                 "CREATE INDEX IF NOT EXISTS `idx_comments_comment_id` ON `{$prefix}fediverse_comments` (`comment_id`);",
                 "CREATE INDEX IF NOT EXISTS `idx_comments_reply_to_id` ON `{$prefix}fediverse_comments` (`reply_to_id`);",
@@ -623,6 +619,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
         $commentModel = new FediverseSync_Models_Comment();
         return $commentModel->getComments($post_id);
     }
+
     /**
      * 渲染 Fediverse 评论
      * 

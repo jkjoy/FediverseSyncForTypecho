@@ -15,3 +15,7 @@
 - UPDATE
 - SELECT
 - DELETE（如果需要删除功能）
+
+
+## 已知BUG
+在使用Mastodon实例时,对嘟文的回复无法保存为评论.

@@ -12,7 +12,8 @@ class FediverseSync_Utils_Http
         $defaultHeaders = [
             'Authorization: Bearer ' . $options->access_token,
             'Accept: application/json',
-            'User-Agent: TypechoFediverseSync/1.1.0'
+            'Content-Type: application/json',
+            'User-Agent: TypechoFediverseSync/1.1.2'
         ];
 
         $ch = curl_init();
@@ -45,7 +46,7 @@ class FediverseSync_Utils_Http
             'Authorization: Bearer ' . $options->access_token,
             'Content-Type: application/json',
             'Accept: application/json',
-            'User-Agent: TypechoFediverseSync/1.1.0'
+            'User-Agent: TypechoFediverseSync/1.1.2'
         ];
 
         $ch = curl_init();
