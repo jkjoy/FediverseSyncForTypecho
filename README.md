@@ -9,12 +9,6 @@
 - MariaDB 10.2+
 - SQLite 3.x
 
-数据库用户需要具有以下权限：
-- CREATE TABLE
-- CREATE INDEX (SQLite)
-- INSERT
-- UPDATE
-- SELECT
-- DELETE（如果需要删除功能）
+支持博客文章标题和url同步到Pleroma, Mastodon, Gotosocial, Misskey等 。
 
 ![后台设置](/image.png)

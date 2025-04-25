@@ -1,4 +1,3 @@
-
 <?php
 if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 
@@ -63,9 +62,11 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
 
             $post->next();
 
-            $content = $post->title . "\n\n";
-            $content .= strip_tags($post->text) . "\n\n";
-            $content .= $post->permalink;
+            // 获取站点名称
+            $siteName = $options->title;
+            
+            // 使用新的消息格式
+            $content = "你的博客「{$siteName}」更新了一篇新的文章「{$post->title}」\n\n访问地址：{$post->permalink}";
 
             $response = $this->postToFediverse($pluginOptions->instance_url, $pluginOptions->access_token, $content);
             $tootData = json_decode($response, true);
@@ -112,32 +113,87 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
 
     private function postToFediverse($instance, $token, $content)
     {
-        $instance = rtrim($instance, '/');
-        $url = $instance . '/api/v1/statuses';
+        $options = Helper::options();
+        $pluginOptions = $options->plugin('FediverseSync');
+        $instance_type = $pluginOptions->instance_type;
         
-        $data = array(
-            'status' => $content,
-            'visibility' => 'public'
-        );
+        $instance = rtrim($instance, '/');
+        
+        // 根据实例类型选择不同的API端点和参数
+        if ($instance_type === 'misskey') {
+            $url = $instance . '/api/notes/create';
+            
+            // Misskey的可见性设置与Mastodon不同
+            $visibility = 'public';
+            switch ($pluginOptions->visibility) {
+                case 'private':
+                    $visibility = 'followers';
+                    break;
+                case 'unlisted':
+                    $visibility = 'home';
+                    break;
+                default:
+                    $visibility = 'public';
+            }
+            
+            $data = array(
+                'i' => $token,  // Misskey使用i参数传递访问令牌
+                'text' => $content,
+                'visibility' => $visibility
+            );
+            
+            $headers = array(
+                'Content-Type: application/json'
+            );
+        } else {
+            // Mastodon/GoToSocial API
+            $url = $instance . '/api/v1/statuses';
+            
+            $data = array(
+                'status' => $content,
+                'visibility' => $pluginOptions->visibility ?? 'public'
+            );
+            
+            $headers = array(
+                'Authorization: Bearer ' . $token,
+                'Content-Type: application/json'
+            );
+        }
 
         $ch = curl_init();
         curl_setopt_array($ch, array(
             CURLOPT_URL => $url,
             CURLOPT_POST => true,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER => array(
-                'Authorization: Bearer ' . $token,
-                'Content-Type: application/json'
-            ),
+            CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => json_encode($data)
         ));
+        
+        // 设置超时
+        if (!empty($pluginOptions->api_timeout)) {
+            curl_setopt($ch, CURLOPT_TIMEOUT, intval($pluginOptions->api_timeout));
+        }
 
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        if ($httpCode !== 200) {
+        if (($httpCode !== 200 && $httpCode !== 204) || empty($response)) {
             throw new Exception('HTTP Error: ' . $httpCode . ' Response: ' . $response);
+        }
+        
+        // 处理Misskey和Mastodon的不同响应格式
+        $responseData = json_decode($response, true);
+        
+        if ($instance_type === 'misskey') {
+            // 如果是Misskey，转换为与Mastodon兼容的格式
+            if (isset($responseData['createdNote'])) {
+                $noteUrl = $instance . '/notes/' . $responseData['createdNote']['id'];
+                return json_encode([
+                    'id' => $responseData['createdNote']['id'],
+                    'url' => $noteUrl
+                ]);
+            }
         }
 
         return $response;

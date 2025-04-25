@@ -1,12 +1,11 @@
-
 <?php
 if (!defined('__TYPECHO_ROOT_DIR__')) exit;
 /**
  * Fediverse Sync for Typecho
- * 将新文章自动同步到 Mastodon/GoToSocial 实例
+ * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync 
- * @version 1.3
+ * @version 1.5.0
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -86,7 +85,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             'instance_type',
             array(
                 'mastodon' => _t('Mastodon'),
-                'gotosocial' => _t('GoToSocial'),
+                'misskey' => _t('Misskey'),
             ),
             'mastodon',
             _t('实例类型'),
@@ -111,15 +110,6 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             _t('请输入您的 Access Token')
         );
         $form->addInput($access_token);
-
-        $summary_length = new Typecho_Widget_Helper_Form_Element_Text(
-            'summary_length',
-            NULL,
-            '100',
-            _t('摘要长度'),
-            _t('从正文提取的摘要长度（字数）')
-        );
-        $form->addInput($summary_length);
 
         $visibility = new Typecho_Widget_Helper_Form_Element_Radio(
             'visibility',
@@ -154,6 +144,19 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             _t('设置API请求超时时间')
         );
         $form->addInput($api_timeout);
+        
+        // 添加删除数据表选项（仅在插件禁用时使用）
+        $drop_tables = new Typecho_Widget_Helper_Form_Element_Radio(
+            'drop_tables',
+            array(
+                '1' => _t('启用'),
+                '0' => _t('禁用'),
+            ),
+            '0',
+            _t('禁用时删除数据表'),
+            _t('禁用插件时是否删除插件创建的数据表')
+        );
+        $form->addInput($drop_tables);
     }
 
     public static function syncToFediverse($contents, $class)
@@ -164,7 +167,6 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
         $instance_type = $pluginOptions->instance_type;
         $instance_url = rtrim($pluginOptions->instance_url, '/');
         $access_token = $pluginOptions->access_token;
-        $summary_length = intval($pluginOptions->summary_length ?? 200);
         $visibility = $pluginOptions->visibility ?? 'public';
         $isDebug = $pluginOptions->debug_mode == '1';
 
@@ -175,43 +177,106 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
 
         try {
             $title = $contents['title'] ?? '';
-            $text = isset($contents['text']) ? str_replace('<!--markdown-->', '', $contents['text']) : '';
-            $text = strip_tags($text);
-            $summary = mb_strlen($text) > $summary_length ? 
-                     mb_substr($text, 0, $summary_length) . '...' : 
-                     $text;
+            
+            // 获取站点名称
+            $siteName = $options->title;
+            
+            // 新的消息格式：不再包含摘要
+            $message = "「{$siteName}」发布新文章「{$title}」\n\n访问地址：{$contents['permalink']}";
 
-            $message = "## {$title}\n\n{$summary}\n\n🔗 阅读全文: {$contents['permalink']}";
-
-            $post_data = [
-                'status' => $message,
-                'visibility' => $visibility
-            ];
+            if ($instance_type === 'misskey') {
+                // Misskey API 处理
+                $api_url = $instance_url . '/api/notes/create';
+                
+                // Misskey的可见性设置与Mastodon不同
+                $misskey_visibility = 'public';
+                switch ($visibility) {
+                    case 'private':
+                        $misskey_visibility = 'followers';
+                        break;
+                    case 'unlisted':
+                        $misskey_visibility = 'home';
+                        break;
+                    default:
+                        $misskey_visibility = 'public';
+                }
+                
+                $post_data = [
+                    'i' => $access_token,  // Misskey使用i参数传递访问令牌
+                    'text' => $message,
+                    'visibility' => $misskey_visibility
+                ];
+                
+                $headers = [
+                    'Content-Type: application/json'
+                ];
+            } else {
+                // Mastodon/GoToSocial API
+                $api_url = $instance_url . '/api/v1/statuses';
+                
+                $post_data = [
+                    'status' => $message,
+                    'visibility' => $visibility
+                ];
+                
+                $headers = [
+                    'Authorization: Bearer ' . $access_token,
+                    'Content-Type: application/json'
+                ];
+            }
 
             $ch = curl_init();
             curl_setopt_array($ch, [
-                CURLOPT_URL => $instance_url . '/api/v1/statuses',
+                CURLOPT_URL => $api_url,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_POST => true,
                 CURLOPT_POSTFIELDS => json_encode($post_data),
-                CURLOPT_HTTPHEADER => [
-                    'Authorization: Bearer ' . $access_token,
-                    'Content-Type: application/json'
-                ]
+                CURLOPT_HTTPHEADER => $headers
             ]);
+            
+            // 设置超时
+            if (!empty($pluginOptions->api_timeout)) {
+                curl_setopt($ch, CURLOPT_TIMEOUT, intval($pluginOptions->api_timeout));
+            }
 
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
 
-            if ($httpCode !== 200) {
+            if ($isDebug) {
+                self::log(isset($contents['cid']) ? $contents['cid'] : 0, 'sync', 'debug', 'API Response: ' . $response);
+            }
+
+            if (($httpCode !== 200 && $httpCode !== 204) || empty($response)) {
                 throw new Exception('HTTP Error: ' . $httpCode);
+            }
+            
+            // 处理响应并保存绑定关系
+            $responseData = json_decode($response, true);
+            
+            if ($instance_type === 'misskey' && isset($responseData['createdNote']['id'])) {
+                // 为Misskey创建绑定关系
+                $note_id = $responseData['createdNote']['id'];
+                $note_url = $instance_url . '/notes/' . $note_id;
+                
+                // 使用数据库创建绑定
+                if (isset($contents['cid'])) {
+                    $db = Typecho_Db::get();
+                    $data = [
+                        'post_id' => $contents['cid'],
+                        'toot_id' => $note_id,
+                        'toot_url' => $note_url,
+                        'instance_url' => $instance_url
+                    ];
+                    
+                    $db->query($db->insert('table.fediverse_bindings')->rows($data));
+                }
             }
 
             return $contents;
 
         } catch (Exception $e) {
-            self::log(0, 'sync', 'error', $e->getMessage());
+            self::log(isset($contents['cid']) ? $contents['cid'] : 0, 'sync', 'error', $e->getMessage());
             return $contents;
         }
     }
