@@ -54,6 +54,7 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
                 throw new Exception(_t('请先配置 Fediverse 实例地址和访问令牌'));
             }
 
+            // 用 Widget_Archive 获取 permalink，确保和固定链接规则一致
             $post = Typecho_Widget::widget('Widget_Archive@sync_' . $cid, 'pageSize=1&type=post', 'cid=' . $cid);
             
             if (!$post->have()) {
@@ -66,7 +67,7 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
             $siteName = $options->title;
             
             // 使用新的消息格式
-            $content = "你的博客「{$siteName}」更新了一篇新的文章「{$post->title}」\n\n访问地址：{$post->permalink}";
+            $content = "「{$siteName}」更新了一篇文章「{$post->title}」\n\n访问地址：{$post->permalink}";
 
             $response = $this->postToFediverse($pluginOptions->instance_url, $pluginOptions->access_token, $content);
             $tootData = json_decode($response, true);
@@ -214,21 +215,33 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
 
         foreach ($cids as $cid) {
             try {
-                $post = $this->db->fetchRow($this->db->select()
+                // 只查基础数据，然后用 Widget_Archive 获取 permalink，保证格式和规则一致
+                $postRow = $this->db->fetchRow($this->db->select()
                     ->from('table.contents')
                     ->where('cid = ?', $cid)
                     ->where('type = ?', 'post')
                     ->where('status = ?', 'publish'));
 
-                if ($post) {
-                    $widget = new Widget_Abstract_Contents($this->request, $this->response);
-                    $widget->push($post);
-                    $permalink = $widget->permalink;
+                if ($postRow) {
+                    // 用 Widget_Archive 获取 permalink
+                    $archive = Typecho_Widget::widget('Widget_Archive@sync_' . $cid, 'pageSize=1&type=post', 'cid=' . $cid);
+                    if ($archive->have()) {
+                        $archive->next();
+                        $permalink = $archive->permalink;
+                        $title = $archive->title;
+                        $text = $archive->text;
+                        $cidVal = $archive->cid;
+                    } else {
+                        $permalink = '';
+                        $title = $postRow['title'] ?? '';
+                        $text = $postRow['text'] ?? '';
+                        $cidVal = $cid;
+                    }
 
                     $response = $sync->postToFediverse([
-                        'cid' => $post['cid'],
-                        'title' => $post['title'],
-                        'text' => $post['text'],
+                        'cid' => $cidVal,
+                        'title' => $title,
+                        'text' => $text,
                         'permalink' => $permalink
                     ]);
 
