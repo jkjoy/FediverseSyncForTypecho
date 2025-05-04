@@ -67,7 +67,7 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
             $siteName = $options->title;
             
             // 使用新的消息格式
-            $content = "「{$siteName}」更新了一篇文章「{$post->title}」\n\n访问地址：{$post->permalink}";
+            $content = "「{$siteName}」同步了一篇文章「{$post->title}」\n\n访问地址：{$post->permalink}";
 
             $response = $this->postToFediverse($pluginOptions->instance_url, $pluginOptions->access_token, $content);
             $tootData = json_decode($response, true);

@@ -175,14 +175,27 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             return $contents;
         }
 
+        // 只在发布新文章时触发同步
+        if ($class->request->get('do') !== 'publish') {
+            return $contents;
+        }
+
         try {
+            // 使用Widget_Archive获取正确的文章链接
+            $post = Typecho_Widget::widget('Widget_Archive@sync_' . $contents['cid'], 'pageSize=1&type=post', 'cid=' . $contents['cid']);
+            if (!$post->have()) {
+                self::log($contents['cid'], 'sync', 'error', '文章不存在');
+                return $contents;
+            }
+            $post->next();
+            
             $title = $contents['title'] ?? '';
             
             // 获取站点名称
             $siteName = $options->title;
             
             // 新的消息格式：不再包含摘要
-            $message = "「{$siteName}」发布新文章「{$title}」\n\n访问地址：{$contents['permalink']}";
+            $message = "「{$siteName}」发布了新的文章「{$title}」\n\n访问地址：{$post->permalink}";
 
             if ($instance_type === 'misskey') {
                 // Misskey API 处理
@@ -244,7 +257,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             curl_close($ch);
 
             if ($isDebug) {
-                self::log(isset($contents['cid']) ? $contents['cid'] : 0, 'sync', 'debug', 'API Response: ' . $response);
+                self::log($contents['cid'], 'sync', 'debug', 'API Response: ' . $response);
             }
 
             if (($httpCode !== 200 && $httpCode !== 204) || empty($response)) {
@@ -276,7 +289,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             return $contents;
 
         } catch (Exception $e) {
-            self::log(isset($contents['cid']) ? $contents['cid'] : 0, 'sync', 'error', $e->getMessage());
+            self::log($contents['cid'], 'sync', 'error', $e->getMessage());
             return $contents;
         }
     }
