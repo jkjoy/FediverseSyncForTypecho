@@ -1,9 +1,7 @@
-
 <?php
 include 'header.php';
 include 'menu.php';
 ?>
-
 <div class="main">
     <div class="body container">
         <?php include 'page-title.php'; ?>

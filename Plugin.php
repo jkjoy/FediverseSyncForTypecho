@@ -5,7 +5,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync 
- * @version 1.5.0
+ * @version 1.5.1
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -16,52 +16,74 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
         $db = Typecho_Db::get();
         $prefix = $db->getPrefix();
         $adapterName = $db->getAdapterName();
-        
+
         if (stripos($adapterName, 'mysql') !== false) {
-            $sql = "CREATE TABLE IF NOT EXISTS `{$prefix}fediverse_bindings` (
-                `id` bigint(20) NOT NULL AUTO_INCREMENT,
-                `post_id` bigint(20) NOT NULL,
-                `toot_id` varchar(255) NOT NULL,
-                `toot_url` varchar(512) DEFAULT NULL,
-                `instance_url` varchar(255) NOT NULL,
-                `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_post_id` (`post_id`),
-                KEY `idx_toot_id` (`toot_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;";
+            $sqls = [
+                "CREATE TABLE IF NOT EXISTS `{$prefix}fediverse_bindings` (
+                    `id` bigint(20) NOT NULL AUTO_INCREMENT,
+                    `post_id` bigint(20) NOT NULL,
+                    `toot_id` varchar(255) NOT NULL,
+                    `toot_url` varchar(512) DEFAULT NULL,
+                    `instance_url` varchar(255) NOT NULL,
+                    `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    UNIQUE KEY `uk_post_id` (`post_id`),
+                    KEY `idx_toot_id` (`toot_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
+                "CREATE TABLE IF NOT EXISTS `{$prefix}fediverse_sync_logs` (
+                    `id` bigint(20) NOT NULL AUTO_INCREMENT,
+                    `post_id` bigint(20) NOT NULL DEFAULT 0,
+                    `action` varchar(50) NOT NULL,
+                    `status` varchar(20) NOT NULL,
+                    `message` text,
+                    `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (`id`),
+                    KEY `idx_post_id` (`post_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
+            ];
         } else {
-            $sql = "CREATE TABLE IF NOT EXISTS `{$prefix}fediverse_bindings` (
-                `id` INTEGER PRIMARY KEY AUTOINCREMENT,
-                `post_id` INTEGER NOT NULL UNIQUE,
-                `toot_id` VARCHAR(255) NOT NULL,
-                `toot_url` VARCHAR(512),
-                `instance_url` VARCHAR(255) NOT NULL,
-                `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );";
+            $sqls = [
+                "CREATE TABLE IF NOT EXISTS `{$prefix}fediverse_bindings` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT,
+                    `post_id` INTEGER NOT NULL UNIQUE,
+                    `toot_id` VARCHAR(255) NOT NULL,
+                    `toot_url` VARCHAR(512),
+                    `instance_url` VARCHAR(255) NOT NULL,
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );",
+                "CREATE TABLE IF NOT EXISTS `{$prefix}fediverse_sync_logs` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT,
+                    `post_id` INTEGER NOT NULL DEFAULT 0,
+                    `action` VARCHAR(50) NOT NULL,
+                    `status` VARCHAR(20) NOT NULL,
+                    `message` TEXT,
+                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );"
+            ];
         }
 
         try {
-            $db->query($sql);
-        } catch (Typecho_Db_Exception $e) {
-            if (!(stripos($adapterName, 'mysql') !== false && $e->getCode() == 1050) &&
-                !(stripos($adapterName, 'sqlite') !== false && stripos($e->getMessage(), 'already exists') !== false)) {
-                throw new Typecho_Plugin_Exception(_t('数据表创建失败：%s', $e->getMessage()));
+            foreach ($sqls as $sql) {
+                $db->query($sql);
             }
+            // 再次检测表是否存在
+            $tables = $db->fetchAll($db->query("SELECT name FROM sqlite_master WHERE type='table' AND (name='{$prefix}fediverse_sync_logs' OR name='{$prefix}fediverse_bindings')"));
+            if (count($tables) < 2) {
+                throw new Typecho_Plugin_Exception(_t('数据表未正确创建，请检查数据库权限或手动建表'));
+            }
+        } catch (Typecho_Db_Exception $e) {
+            throw new Typecho_Plugin_Exception(_t('数据表创建失败：%s', $e->getMessage()));
         }
 
-        // 注册文章发布和修改钩子
+        // 注册钩子
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = array('FediverseSync_Plugin', 'syncToFediverse');
-        Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishSave = array('FediverseSync_Plugin', 'syncToFediverse');
-        
-        // 注册同步Action
+        //Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishSave = array('FediverseSync_Plugin', 'syncToFediverse');
         Helper::addAction('fediverse-sync', 'FediverseSync_Action');
-        
-        // 注册后台面板
         Helper::addPanel(1, 'FediverseSync/panel.php', _t('Fediverse 同步'), _t('管理 Fediverse 同步'), 'administrator');
 
         return _t('插件已经激活，请配置 Fediverse 实例信息');
     }
-    
+
     public static function deactivate()
     {
         Helper::removeAction('fediverse-sync');
@@ -71,13 +93,13 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
         if ($options->drop_tables == '1') {
             $db = Typecho_Db::get();
             $prefix = $db->getPrefix();
-            $sql = "DROP TABLE IF EXISTS `{$prefix}fediverse_bindings`";
-            $db->query($sql);
+            $db->query("DROP TABLE IF EXISTS `{$prefix}fediverse_bindings`");
+            $db->query("DROP TABLE IF EXISTS `{$prefix}fediverse_sync_logs`");
             return _t('插件已被禁用，数据表已删除');
         }
-
         return _t('插件已被禁用，数据表已保留');
     }
+
 
     public static function config(Typecho_Widget_Helper_Form $form)
     {
@@ -164,6 +186,9 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
         $options = Helper::options();
         $pluginOptions = $options->plugin('FediverseSync');
         
+        // 获取数据库实例
+        $db = Typecho_Db::get();
+        
         $instance_type = $pluginOptions->instance_type;
         $instance_url = rtrim($pluginOptions->instance_url, '/');
         $access_token = $pluginOptions->access_token;
@@ -177,25 +202,55 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
 
         // 只在发布新文章时触发同步
         if ($class->request->get('do') !== 'publish') {
+            if ($isDebug) {
+                self::log(0, 'sync', 'debug', '非发布操作，跳过同步');
+            }
             return $contents;
         }
 
         try {
-            // 使用Widget_Archive获取正确的文章链接
-            $post = Typecho_Widget::widget('Widget_Archive@sync_' . $contents['cid'], 'pageSize=1&type=post', 'cid=' . $contents['cid']);
-            if (!$post->have()) {
-                self::log($contents['cid'], 'sync', 'error', '文章不存在');
+            // 获取文章ID
+            $cid = $contents['cid'] ?? $class->cid;
+            
+            if (empty($cid)) {
+                if ($isDebug) {
+                    self::log(0, 'sync', 'debug', '无法获取文章ID，跳过同步');
+                }
                 return $contents;
             }
-            $post->next();
-            
+
+            // 检查是否已经同步过
+            $existingBinding = $db->fetchRow($db->select()
+                ->from('table.fediverse_bindings')
+                ->where('post_id = ?', $cid)
+                ->limit(1));
+
+            if ($existingBinding) {
+                if ($isDebug) {
+                    self::log($cid, 'sync', 'debug', '文章已经同步过，跳过同步');
+                }
+                return $contents;
+            }
+
             $title = $contents['title'] ?? '';
-            
-            // 获取站点名称
             $siteName = $options->title;
             
-            // 新的消息格式：不再包含摘要
-            $message = "「{$siteName}」发布了新的文章「{$title}」\n\n访问地址：{$post->permalink}";
+            // 获取文章完整信息和固定链接
+            $permalink = $class->permalink;
+            
+            if (empty($permalink)) {
+                if ($isDebug) {
+                    self::log($cid, 'sync', 'error', '无法获取文章链接');
+                }
+                return $contents;
+            }
+            
+            // 新的消息格式
+            $message = "「{$siteName}」发布新文章「{$title}」\n\n访问地址：{$permalink}";
+
+            if ($isDebug) {
+                self::log($cid, 'sync', 'debug', '准备发送消息：' . $message);
+            }
 
             if ($instance_type === 'misskey') {
                 // Misskey API 处理
@@ -257,7 +312,8 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             curl_close($ch);
 
             if ($isDebug) {
-                self::log($contents['cid'], 'sync', 'debug', 'API Response: ' . $response);
+                self::log($cid, 'sync', 'debug', 'API Response: ' . $response);
+                self::log($cid, 'sync', 'debug', 'HTTP Code: ' . $httpCode);
             }
 
             if (($httpCode !== 200 && $httpCode !== 204) || empty($response)) {
@@ -267,29 +323,78 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             // 处理响应并保存绑定关系
             $responseData = json_decode($response, true);
             
-            if ($instance_type === 'misskey' && isset($responseData['createdNote']['id'])) {
+            if ($instance_type === 'misskey') {
                 // 为Misskey创建绑定关系
-                $note_id = $responseData['createdNote']['id'];
-                $note_url = $instance_url . '/notes/' . $note_id;
-                
-                // 使用数据库创建绑定
-                if (isset($contents['cid'])) {
-                    $db = Typecho_Db::get();
-                    $data = [
-                        'post_id' => $contents['cid'],
-                        'toot_id' => $note_id,
-                        'toot_url' => $note_url,
-                        'instance_url' => $instance_url
-                    ];
+                if (isset($responseData['createdNote']['id'])) {
+                    $note_id = $responseData['createdNote']['id'];
+                    $note_url = $instance_url . '/notes/' . $note_id;
                     
-                    $db->query($db->insert('table.fediverse_bindings')->rows($data));
+                    // 更新或插入绑定关系
+                    $existingBinding = $db->fetchRow($db->select()
+                        ->from('table.fediverse_bindings')
+                        ->where('post_id = ?', $cid)
+                        ->limit(1));
+                    
+                    if ($existingBinding) {
+                        // 更新现有记录
+                        $db->query($db->update('table.fediverse_bindings')
+                            ->rows([
+                                'toot_id' => $note_id,
+                                'toot_url' => $note_url,
+                                'instance_url' => $instance_url
+                            ])
+                            ->where('post_id = ?', $cid));
+                    } else {
+                        // 插入新记录
+                        $db->query($db->insert('table.fediverse_bindings')
+                            ->rows([
+                                'post_id' => $cid,
+                                'toot_id' => $note_id,
+                                'toot_url' => $note_url,
+                                'instance_url' => $instance_url
+                            ]));
+                    }
+                    
+                    if ($isDebug) {
+                        self::log($cid, 'sync', 'debug', '已更新 Misskey 绑定关系：' . $note_url);
+                    }
+                }
+            } else if (isset($responseData['id']) && isset($responseData['url'])) {
+                // 为 Mastodon/GoToSocial 创建绑定关系
+                $existingBinding = $db->fetchRow($db->select()
+                    ->from('table.fediverse_bindings')
+                    ->where('post_id = ?', $cid)
+                    ->limit(1));
+                
+                if ($existingBinding) {
+                    // 更新现有记录
+                    $db->query($db->update('table.fediverse_bindings')
+                        ->rows([
+                            'toot_id' => $responseData['id'],
+                            'toot_url' => $responseData['url'],
+                            'instance_url' => $instance_url
+                        ])
+                        ->where('post_id = ?', $cid));
+                } else {
+                    // 插入新记录
+                    $db->query($db->insert('table.fediverse_bindings')
+                        ->rows([
+                            'post_id' => $cid,
+                            'toot_id' => $responseData['id'],
+                            'toot_url' => $responseData['url'],
+                            'instance_url' => $instance_url
+                        ]));
+                }
+                
+                if ($isDebug) {
+                    self::log($cid, 'sync', 'debug', '已更新 Mastodon/GoToSocial 绑定关系：' . $responseData['url']);
                 }
             }
 
             return $contents;
 
         } catch (Exception $e) {
-            self::log($contents['cid'], 'sync', 'error', $e->getMessage());
+            self::log(isset($cid) ? $cid : 0, 'sync', 'error', $e->getMessage());
             return $contents;
         }
     }

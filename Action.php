@@ -13,103 +13,136 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
      */
     private $db;
 
+    public function __construct($request, $response, $params = NULL)
+    {
+        parent::__construct($request, $response, $params);
+        $this->db = Typecho_Db::get();
+    }
+
     protected function init()
     {
         parent::init();
         $this->security = Typecho_Widget::widget('Widget_Security');
-        $this->db = Typecho_Db::get();
     }
 
     public function action()
     {
         $user = Typecho_Widget::widget('Widget_User');
         if (!$user->hasLogin()) {
-            throw new Typecho_Widget_Exception(_t('未经授权的访问'), 403);
+            throw new Typecho_Widget_Exception(_t('未登录'));
+        }
+        
+        if (!$user->pass('administrator', true)) {
+            throw new Typecho_Widget_Exception(_t('权限不足'));
         }
 
         if ($this->request->is('do=sync')) {
             $this->security->protect();
-            $this->syncSelected();
-        } else if ($this->request->is('do=syncSingle')) {
-            $this->security->protect();
-            $this->syncSingle();
+            $this->sync();
         }
     }
 
-    public function syncSingle()
+    public function sync()
     {
-        $cid = $this->request->get('cid');
-        if (empty($cid)) {
-            $this->response->throwJson([
-                'success' => false,
-                'message' => _t('缺少文章ID')
-            ]);
+        $cids = $this->request->getArray('cid');
+        if (empty($cids)) {
+            $this->widget('Widget_Notice')->set(_t('请选择要同步的文章'), 'error');
+            $this->response->goBack();
+            return;
         }
 
-        try {
-            $options = Helper::options();
-            $pluginOptions = $options->plugin('FediverseSync');
-            
-            if (empty($pluginOptions->instance_url) || empty($pluginOptions->access_token)) {
-                throw new Exception(_t('请先配置 Fediverse 实例地址和访问令牌'));
-            }
-
-            // 用 Widget_Archive 获取 permalink，确保和固定链接规则一致
-            $post = Typecho_Widget::widget('Widget_Archive@sync_' . $cid, 'pageSize=1&type=post', 'cid=' . $cid);
-            
-            if (!$post->have()) {
-                throw new Exception(_t('文章不存在或未发布'));
-            }
-
-            $post->next();
-
-            // 获取站点名称
-            $siteName = $options->title;
-            
-            // 使用新的消息格式
-            $content = "「{$siteName}」同步了一篇文章「{$post->title}」\n\n访问地址：{$post->permalink}";
-
-            $response = $this->postToFediverse($pluginOptions->instance_url, $pluginOptions->access_token, $content);
-            $tootData = json_decode($response, true);
-
-            if (!isset($tootData['id']) || !isset($tootData['url'])) {
-                throw new Exception(_t('发送到 Fediverse 失败：无效的响应'));
-            }
-
-            $instanceUrl = rtrim($pluginOptions->instance_url, '/');
-            $data = [
-                'post_id' => $post->cid,
-                'toot_id' => $tootData['id'],
-                'toot_url' => $tootData['url'],
-                'instance_url' => $instanceUrl
-            ];
-
-            $binding = $this->db->fetchRow($this->db->select()
-                ->from('table.fediverse_bindings')
-                ->where('post_id = ?', $post->cid)
-                ->limit(1));
-
-            if ($binding) {
-                $this->db->query($this->db->update('table.fediverse_bindings')
-                    ->rows($data)
-                    ->where('post_id = ?', $post->cid));
-            } else {
-                $this->db->query($this->db->insert('table.fediverse_bindings')
-                    ->rows($data));
-            }
-
-            $this->response->throwJson([
-                'success' => true,
-                'message' => _t('同步成功'),
-                'post_url' => $post->permalink,
-                'toot_url' => $tootData['url']
-            ]);
-        } catch (Exception $e) {
-            $this->response->throwJson([
-                'success' => false,
-                'message' => _t('同步失败：') . $e->getMessage()
-            ]);
+        $options = Helper::options();
+        $pluginOptions = $options->plugin('FediverseSync');
+        
+        if (empty($pluginOptions->instance_url) || empty($pluginOptions->access_token)) {
+            $this->widget('Widget_Notice')->set(_t('请先配置 Fediverse 实例地址和访问令牌'), 'error');
+            $this->response->goBack();
+            return;
         }
+
+        $successes = $failures = 0;
+        foreach ($cids as $cid) {
+            try {
+                // 获取文章信息
+                $post = $this->db->fetchRow($this->db->select()
+                    ->from('table.contents')
+                    ->where('cid = ?', $cid)
+                    ->where('type = ?', 'post')
+                    ->where('status = ?', 'publish')
+                    ->limit(1));
+
+                if ($post) {
+                    // 用 Widget_Archive 获取 permalink
+                    $archive = Typecho_Widget::widget('Widget_Archive@sync_' . $cid, 'pageSize=1&type=post', 'cid=' . $cid);
+                    if ($archive->have()) {
+                        $archive->next();
+                        
+                        // 获取站点名称
+                        $siteName = $options->title;
+                        
+                        // 使用新的消息格式
+                        $content = "「{$siteName}」同步了一篇文章「{$archive->title}」\n\n访问地址：{$archive->permalink}";
+
+                        // 发送到 Fediverse
+                        $response = $this->postToFediverse($pluginOptions->instance_url, $pluginOptions->access_token, $content);
+                        $tootData = json_decode($response, true);
+
+                        if ($pluginOptions->instance_type === 'misskey') {
+                            if (isset($tootData['createdNote']['id'])) {
+                                $tootData = [
+                                    'id' => $tootData['createdNote']['id'],
+                                    'url' => $pluginOptions->instance_url . '/notes/' . $tootData['createdNote']['id']
+                                ];
+                            }
+                        }
+
+                        if (!isset($tootData['id']) || !isset($tootData['url'])) {
+                            throw new Exception(_t('发送到 Fediverse 失败：无效的响应'));
+                        }
+
+                        // 更新或插入绑定关系
+                        $binding = $this->db->fetchRow($this->db->select()
+                            ->from('table.fediverse_bindings')
+                            ->where('post_id = ?', $cid)
+                            ->limit(1));
+
+                        $data = [
+                            'post_id' => $cid,
+                            'toot_id' => $tootData['id'],
+                            'toot_url' => $tootData['url'],
+                            'instance_url' => rtrim($pluginOptions->instance_url, '/')
+                        ];
+
+                        if ($binding) {
+                            $this->db->query($this->db->update('table.fediverse_bindings')
+                                ->rows($data)
+                                ->where('post_id = ?', $cid));
+                        } else {
+                            $this->db->query($this->db->insert('table.fediverse_bindings')
+                                ->rows($data));
+                        }
+
+                        $successes++;
+                    }
+                }
+            } catch (Exception $e) {
+                FediverseSync_Plugin::log($cid, 'sync', 'error', '手动同步失败：' . $e->getMessage());
+                $failures++;
+            }
+        }
+
+        // 设置提示消息
+        $msg = '';
+        if ($successes > 0) {
+            $msg .= _t('成功同步 %d 篇文章。', $successes);
+        }
+        if ($failures > 0) {
+            $msg .= _t('同步失败 %d 篇文章。', $failures);
+        }
+
+        // 返回面板页面
+        $this->widget('Widget_Notice')->set($msg, $failures > 0 ? 'error' : 'success');
+        $this->response->goBack();
     }
 
     private function postToFediverse($instance, $token, $content)
@@ -182,82 +215,7 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
         if (($httpCode !== 200 && $httpCode !== 204) || empty($response)) {
             throw new Exception('HTTP Error: ' . $httpCode . ' Response: ' . $response);
         }
-        
-        // 处理Misskey和Mastodon的不同响应格式
-        $responseData = json_decode($response, true);
-        
-        if ($instance_type === 'misskey') {
-            // 如果是Misskey，转换为与Mastodon兼容的格式
-            if (isset($responseData['createdNote'])) {
-                $noteUrl = $instance . '/notes/' . $responseData['createdNote']['id'];
-                return json_encode([
-                    'id' => $responseData['createdNote']['id'],
-                    'url' => $noteUrl
-                ]);
-            }
-        }
 
         return $response;
-    }
-
-    public function syncSelected()
-    {
-        $cids = $this->request->filter('int')->getArray('cid');
-        if (empty($cids)) {
-            $this->widget('Widget_Notice')->set(_t('请选择要同步的文章'), 'error');
-            $this->response->goBack();
-            return;
-        }
-
-        $sync = new FediverseSync_Api_Sync();
-        $successCount = 0;
-        $failCount = 0;
-
-        foreach ($cids as $cid) {
-            try {
-                // 只查基础数据，然后用 Widget_Archive 获取 permalink，保证格式和规则一致
-                $postRow = $this->db->fetchRow($this->db->select()
-                    ->from('table.contents')
-                    ->where('cid = ?', $cid)
-                    ->where('type = ?', 'post')
-                    ->where('status = ?', 'publish'));
-
-                if ($postRow) {
-                    // 用 Widget_Archive 获取 permalink
-                    $archive = Typecho_Widget::widget('Widget_Archive@sync_' . $cid, 'pageSize=1&type=post', 'cid=' . $cid);
-                    if ($archive->have()) {
-                        $archive->next();
-                        $permalink = $archive->permalink;
-                        $title = $archive->title;
-                        $text = $archive->text;
-                        $cidVal = $archive->cid;
-                    } else {
-                        $permalink = '';
-                        $title = $postRow['title'] ?? '';
-                        $text = $postRow['text'] ?? '';
-                        $cidVal = $cid;
-                    }
-
-                    $response = $sync->postToFediverse([
-                        'cid' => $cidVal,
-                        'title' => $title,
-                        'text' => $text,
-                        'permalink' => $permalink
-                    ]);
-
-                    if ($response && isset($response['id'])) {
-                        $successCount++;
-                    } else {
-                        $failCount++;
-                    }
-                }
-            } catch (Exception $e) {
-                $failCount++;
-            }
-        }
-
-        $message = _t('同步完成：%d 篇成功，%d 篇失败', $successCount, $failCount);
-        $this->widget('Widget_Notice')->set($message, $failCount > 0 ? 'error' : 'success');
-        $this->response->goBack();
     }
 }
