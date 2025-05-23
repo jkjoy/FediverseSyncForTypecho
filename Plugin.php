@@ -5,7 +5,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync 
- * @version 1.5.2
+ * @version 1.5.3
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -289,7 +289,9 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 
                 $headers = [
                     'Authorization: Bearer ' . $access_token,
-                    'Content-Type: application/json'
+                    'Content-Type: application/json',
+                    'Accept: */*',
+                    'User-Agent: FediverseSync/1.5.3'
                 ];
             }
 

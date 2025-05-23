@@ -190,7 +190,9 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
             
             $headers = array(
                 'Authorization: Bearer ' . $token,
-                'Content-Type: application/json'
+                'Content-Type: application/json',
+                'Accept: */*',
+                'User-Agent: FediverseSync/1.5.3'
             );
         }
 
