@@ -5,7 +5,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync 
- * @version 1.5.1
+ * @version 1.5.2
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -246,7 +246,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             }
             
             // 新的消息格式
-            $message = "「{$siteName}」发布新文章「{$title}」\n\n访问地址：{$permalink}";
+            $message = "「{$title}」\n\n{$permalink}\n\nFrom「{$siteName}」";
 
             if ($isDebug) {
                 self::log($cid, 'sync', 'debug', '准备发送消息：' . $message);
