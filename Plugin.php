@@ -5,7 +5,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync 
- * @version 1.5.3
+ * @version 1.5.4
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -401,7 +401,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
         }
     }
 
-    private static function log($post_id, $action, $status, $message)
+    public static function log($post_id, $action, $status, $message)
     {
         try {
             $db = Typecho_Db::get();
