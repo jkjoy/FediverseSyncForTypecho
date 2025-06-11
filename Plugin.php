@@ -5,7 +5,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync 
- * @version 1.5.4
+ * @version 1.5.5
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -225,9 +225,17 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 ->where('post_id = ?', $cid)
                 ->limit(1));
 
-            if ($existingBinding) {
+            // 获取文章创建与修改时间
+            $post = $db->fetchRow($db->select()
+                ->from('table.contents')
+                ->where('cid = ?', $cid)
+                ->limit(1));
+
+            // 只有未同步过 且 created==modified（新建发布）才进行同步
+            if ($existingBinding || !$post || $post['created'] != $post['modified']) {
                 if ($isDebug) {
-                    self::log($cid, 'sync', 'debug', '文章已经同步过，跳过同步');
+                $reason = $existingBinding ? '文章已经同步过' : '不是新建文章（created != modified）';
+                self::log($cid, 'sync', 'debug', $reason . '，跳过同步');
                 }
                 return $contents;
             }
