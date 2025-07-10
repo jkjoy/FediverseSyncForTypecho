@@ -5,7 +5,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync 
- * @version 1.5.5
+ * @version 1.5.6
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -67,7 +67,22 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 $db->query($sql);
             }
             // 再次检测表是否存在
-            $tables = $db->fetchAll($db->query("SELECT name FROM sqlite_master WHERE type='table' AND (name='{$prefix}fediverse_sync_logs' OR name='{$prefix}fediverse_bindings')"));
+            $dbType = $db->getAdapterName(); // 获取数据库类型（'Mysql' 或 'SQLite'）
+
+            if ($dbType === 'SQLite') {
+            $tables = $db->fetchAll($db->query("
+            SELECT name FROM sqlite_master 
+            WHERE type='table' 
+            AND (name='{$prefix}fediverse_sync_logs' OR name='{$prefix}fediverse_bindings')
+            "));
+            } else { // MySQL / MariaDB
+            $tables = $db->fetchAll($db->query("
+            SELECT table_name AS name 
+            FROM information_schema.tables 
+            WHERE table_schema = DATABASE() 
+            AND (table_name = '{$prefix}fediverse_sync_logs' OR table_name = '{$prefix}fediverse_bindings')
+           "));
+            }
             if (count($tables) < 2) {
                 throw new Typecho_Plugin_Exception(_t('数据表未正确创建，请检查数据库权限或手动建表'));
             }
@@ -77,7 +92,6 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
 
         // 注册钩子
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = array('FediverseSync_Plugin', 'syncToFediverse');
-        //Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishSave = array('FediverseSync_Plugin', 'syncToFediverse');
         Helper::addAction('fediverse-sync', 'FediverseSync_Action');
         Helper::addPanel(1, 'FediverseSync/panel.php', _t('Fediverse 同步'), _t('管理 Fediverse 同步'), 'administrator');
 
