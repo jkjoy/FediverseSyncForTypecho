@@ -4,8 +4,8 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * Fediverse Sync for Typecho
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
- * @package FediverseSync 
- * @version 1.5.6
+ * @package FediverseSync
+ * @version 1.6.0
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -160,6 +160,46 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($visibility);
 
+        // 是否显示原文内容
+        $show_content = new Typecho_Widget_Helper_Form_Element_Radio(
+            'show_content',
+            array(
+                '1' => _t('显示'),
+                '0' => _t('不显示'),
+            ),
+            '0',
+            _t('同步时显示原文内容'),
+            _t('是否在同步消息中包含文章原文内容')
+        );
+        $form->addInput($show_content);
+
+        // 内容长度限制
+        $content_length = new Typecho_Widget_Helper_Form_Element_Text(
+            'content_length',
+            NULL,
+            '500',
+            _t('原文内容长度限制'),
+            _t('当显示原文内容时，限制显示的字数（0表示不限制）')
+        );
+        $form->addInput($content_length);
+
+        // 自定义同步内容模板
+        $content_template = new Typecho_Widget_Helper_Form_Element_Textarea(
+            'content_template',
+            NULL,
+            "「{title}」\n\n{permalink}\n\nFrom「{site_name}」",
+            _t('同步内容模板'),
+            _t('自定义同步到Fediverse的内容模板，支持变量：<br>
+                {title} - 文章标题<br>
+                {permalink} - 文章链接<br>
+                {content} - 文章内容<br>
+                {author} - 作者名称<br>
+                {created} - 发布时间<br>
+                {site_name} - 站点名称<br>
+                留空使用默认模板')
+        );
+        $form->addInput($content_template);
+
         $debug_mode = new Typecho_Widget_Helper_Form_Element_Radio(
             'debug_mode',
             array(
@@ -267,8 +307,41 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 return $contents;
             }
             
-            // 新的消息格式
-            $message = "「{$title}」\n\n{$permalink}\n\nFrom「{$siteName}」";
+            // 获取文章内容
+            $postContent = '';
+            if ($pluginOptions->show_content == '1') {
+                $contentLength = intval($pluginOptions->content_length ?? 500);
+                $postContent = FediverseSync_Utils_Template::processContent($contents['text'] ?? '', $contentLength);
+            }
+
+            // 获取作者信息
+            $author = '';
+            if (isset($contents['authorId'])) {
+                $authorRow = $db->fetchRow($db->select('screenName')
+                    ->from('table.users')
+                    ->where('uid = ?', $contents['authorId'])
+                    ->limit(1));
+                $author = $authorRow['screenName'] ?? '';
+            }
+
+            // 使用模板工具类处理内容
+            $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
+            
+            $templateData = [
+                'title' => $title,
+                'permalink' => $permalink,
+                'content' => $postContent,
+                'author' => $author,
+                'created' => date('Y-m-d H:i', $post['created']),
+                'site_name' => $siteName
+            ];
+            
+            $message = FediverseSync_Utils_Template::parse($template, $templateData);
+
+            // 如果启用了显示内容且内容不为空，但模板中没有包含content变量，则在消息末尾添加内容
+            if ($pluginOptions->show_content == '1' && !empty($postContent) && strpos($template, '{content}') === false) {
+                $message .= "\n\n" . $postContent;
+            }
 
             if ($isDebug) {
                 self::log($cid, 'sync', 'debug', '准备发送消息：' . $message);

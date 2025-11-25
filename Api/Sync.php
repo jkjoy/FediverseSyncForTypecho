@@ -26,8 +26,34 @@ class FediverseSync_Api_Sync
             // 获取站点名称
             $siteName = Helper::options()->title;
             
-            // 新的消息格式：不再包含摘要
-            $message = "你的博客「{$siteName}」更新了一篇新的文章「{$contents['title']}」\n\n访问地址：{$contents['permalink']}";
+            // 获取文章内容
+            $postContent = '';
+            if ($options->show_content == '1') {
+                $contentLength = intval($options->content_length ?? 500);
+                $postContent = FediverseSync_Utils_Template::processContent($contents['text'] ?? '', $contentLength);
+            }
+
+            // 获取作者信息
+            $author = $contents['author'] ?? '';
+
+            // 使用模板工具类处理内容
+            $template = $options->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
+            
+            $templateData = [
+                'title' => $contents['title'],
+                'permalink' => $contents['permalink'],
+                'content' => $postContent,
+                'author' => $author,
+                'created' => date('Y-m-d H:i', $contents['created']),
+                'site_name' => $siteName
+            ];
+            
+            $message = FediverseSync_Utils_Template::parse($template, $templateData);
+
+            // 如果启用了显示内容且内容不为空，但模板中没有包含content变量，则在消息末尾添加内容
+            if ($options->show_content == '1' && !empty($postContent) && strpos($template, '{content}') === false) {
+                $message .= "\n\n" . $postContent;
+            }
 
             // 根据实例类型调用不同的API
             if ($instance_type === 'misskey') {
