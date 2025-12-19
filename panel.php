@@ -121,6 +121,11 @@ function get_posts_for_sync() {
     $db = Typecho_Db::get();
     $options = Helper::options();
     $pluginOptions = $options->plugin('FediverseSync');
+    $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
+    if (empty($template)) {
+        $template = FediverseSync_Utils_Template::getDefaultTemplate();
+    }
+    $showContent = strpos($template, '{content}') !== false;
     
     $posts = $db->fetchAll($db->select('table.contents.cid', 'table.contents.title',
                                      'table.contents.created', 'table.contents.authorId',
@@ -149,9 +154,9 @@ function get_posts_for_sync() {
             'day' => date('d', $post['created'])
         ];
 
-        // 获取文章摘要（如果启用了显示内容）
+        // 获取文章摘要（是否显示由模板是否包含 {content} 决定）
         $content_preview = '';
-        if ($pluginOptions->show_content == '1') {
+        if ($showContent) {
             $content = strip_tags($post['text'] ?? '');
             $contentLength = intval($pluginOptions->content_length ?? 100);
             if ($contentLength > 0 && mb_strlen($content) > $contentLength) {
@@ -180,11 +185,15 @@ function get_posts_for_sync() {
 function get_sync_config_info() {
     $options = Helper::options();
     $pluginOptions = $options->plugin('FediverseSync');
+    $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
+    if (empty($template)) {
+        $template = FediverseSync_Utils_Template::getDefaultTemplate();
+    }
     
     $config = [
-        'show_content' => $pluginOptions->show_content == '1',
+        'show_content' => strpos($template, '{content}') !== false,
         'content_length' => intval($pluginOptions->content_length ?? 500),
-        'template' => $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate(),
+        'template' => $template,
         'instance_type' => $pluginOptions->instance_type ?? 'mastodon',
         'visibility' => $pluginOptions->visibility ?? 'public'
     ];

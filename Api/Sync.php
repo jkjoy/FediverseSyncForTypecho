@@ -26,19 +26,32 @@ class FediverseSync_Api_Sync
             // 获取站点名称
             $siteName = Helper::options()->title;
             
+            // 使用模板工具类处理内容（是否包含原文由模板是否包含 {content} 决定）
+            $template = $options->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
+            if (empty($template)) {
+                $template = FediverseSync_Utils_Template::getDefaultTemplate();
+            }
+
             // 获取文章内容
             $postContent = '';
-            if ($options->show_content == '1') {
+            if (strpos($template, '{content}') !== false) {
                 $contentLength = intval($options->content_length ?? 500);
-                $postContent = FediverseSync_Utils_Template::processContent($contents['text'] ?? '', $contentLength);
+                $rawContent = $contents['text'] ?? ($contents['content'] ?? '');
+                if ($rawContent === '' && !empty($contents['cid'])) {
+                    try {
+                        $db = Typecho_Db::get();
+                        $row = $db->fetchRow($db->select('text')->from('table.contents')->where('cid = ?', $contents['cid'])->limit(1));
+                        $rawContent = $row['text'] ?? '';
+                    } catch (Exception $e) {
+                        // ignore and fall back to empty
+                    }
+                }
+                $postContent = FediverseSync_Utils_Template::processContent($rawContent, $contentLength);
             }
 
             // 获取作者信息
             $author = $contents['author'] ?? '';
 
-            // 使用模板工具类处理内容
-            $template = $options->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
-            
             $templateData = [
                 'title' => $contents['title'],
                 'permalink' => $contents['permalink'],
@@ -49,11 +62,6 @@ class FediverseSync_Api_Sync
             ];
             
             $message = FediverseSync_Utils_Template::parse($template, $templateData);
-
-            // 如果启用了显示内容且内容不为空，但模板中没有包含content变量，则在消息末尾添加内容
-            if ($options->show_content == '1' && !empty($postContent) && strpos($template, '{content}') === false) {
-                $message .= "\n\n" . $postContent;
-            }
 
             // 根据实例类型调用不同的API
             if ($instance_type === 'misskey') {
@@ -101,7 +109,7 @@ class FediverseSync_Api_Sync
             'Authorization: Bearer ' . $access_token,
             'Content-Type: application/json',
             'Accept: application/json',
-            'User-Agent: FediverseSync/1.4.0'
+            'User-Agent: FediverseSync/1.6.1'
         ]);
         
         // 设置超时
@@ -188,7 +196,7 @@ class FediverseSync_Api_Sync
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
             'Accept: application/json',
-            'User-Agent: FediverseSync/1.4.0'
+            'User-Agent: FediverseSync/1.6.1'
         ]);
         
         // 设置超时

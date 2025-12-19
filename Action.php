@@ -80,19 +80,23 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
                         // 获取站点名称
                         $siteName = $options->title;
                         
+                        // 使用模板工具类处理内容（是否包含原文由模板是否包含 {content} 决定）
+                        $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
+                        if (empty($template)) {
+                            $template = FediverseSync_Utils_Template::getDefaultTemplate();
+                        }
+
                         // 获取文章内容
                         $postContent = '';
-                        if ($pluginOptions->show_content == '1') {
+                        if (strpos($template, '{content}') !== false) {
                             $contentLength = intval($pluginOptions->content_length ?? 500);
-                            $postContent = FediverseSync_Utils_Template::processContent($archive->content ?? '', $contentLength);
+                            $rawContent = $archive->text ?? ($archive->content ?? ($post['text'] ?? ''));
+                            $postContent = FediverseSync_Utils_Template::processContent($rawContent, $contentLength);
                         }
 
                         // 获取作者信息
                         $author = $archive->author->screenName ?? '';
 
-                        // 使用模板工具类处理内容
-                        $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
-                        
                         $templateData = [
                             'title' => $archive->title,
                             'permalink' => $archive->permalink,
@@ -103,11 +107,6 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
                         ];
                         
                         $content = FediverseSync_Utils_Template::parse($template, $templateData);
-
-                        // 如果启用了显示内容且内容不为空，但模板中没有包含content变量，则在消息末尾添加内容
-                        if ($pluginOptions->show_content == '1' && !empty($postContent) && strpos($template, '{content}') === false) {
-                            $content .= "\n\n" . $postContent;
-                        }
 
                         // 发送到 Fediverse
                         $response = $this->postToFediverse($pluginOptions->instance_url, $pluginOptions->access_token, $content);
@@ -218,7 +217,7 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
                 'Authorization: Bearer ' . $token,
                 'Content-Type: application/json',
                 'Accept: */*',
-                'User-Agent: FediverseSync/1.5.3'
+                'User-Agent: FediverseSync/1.6.1'
             );
         }
 

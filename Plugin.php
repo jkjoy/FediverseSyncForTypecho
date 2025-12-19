@@ -5,7 +5,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync
- * @version 1.6.0
+ * @version 1.6.1
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -62,33 +62,21 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             ];
         }
 
-        try {
-            foreach ($sqls as $sql) {
-                $db->query($sql);
-            }
-            // 再次检测表是否存在
-            $dbType = $db->getAdapterName(); // 获取数据库类型（'Mysql' 或 'SQLite'）
-
-            if ($dbType === 'SQLite') {
-            $tables = $db->fetchAll($db->query("
-            SELECT name FROM sqlite_master 
-            WHERE type='table' 
-            AND (name='{$prefix}fediverse_sync_logs' OR name='{$prefix}fediverse_bindings')
-            "));
-            } else { // MySQL / MariaDB
-            $tables = $db->fetchAll($db->query("
-            SELECT table_name AS name 
-            FROM information_schema.tables 
-            WHERE table_schema = DATABASE() 
-            AND (table_name = '{$prefix}fediverse_sync_logs' OR table_name = '{$prefix}fediverse_bindings')
-           "));
-            }
-            if (count($tables) < 2) {
-                throw new Typecho_Plugin_Exception(_t('数据表未正确创建，请检查数据库权限或手动建表'));
-            }
-        } catch (Typecho_Db_Exception $e) {
-            throw new Typecho_Plugin_Exception(_t('数据表创建失败：%s', $e->getMessage()));
-        }
+	        try {
+	            foreach ($sqls as $sql) {
+	                $db->query($sql);
+	            }
+	            // 再次检测表是否存在：用 Typecho 的 table.* 语法，避免不同数据库的元数据表差异
+	            foreach (['fediverse_bindings', 'fediverse_sync_logs'] as $table) {
+	                try {
+	                    $db->fetchRow($db->select()->from('table.' . $table)->limit(1));
+	                } catch (Typecho_Db_Exception $e) {
+	                    throw new Typecho_Plugin_Exception(_t('数据表未正确创建，请检查数据库权限或手动建表'));
+	                }
+	            }
+	        } catch (Typecho_Db_Exception $e) {
+	            throw new Typecho_Plugin_Exception(_t('数据表创建失败：%s', $e->getMessage()));
+	        }
 
         // 注册钩子
         Typecho_Plugin::factory('Widget_Contents_Post_Edit')->finishPublish = array('FediverseSync_Plugin', 'syncToFediverse');
@@ -160,26 +148,13 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
         );
         $form->addInput($visibility);
 
-        // 是否显示原文内容
-        $show_content = new Typecho_Widget_Helper_Form_Element_Radio(
-            'show_content',
-            array(
-                '1' => _t('显示'),
-                '0' => _t('不显示'),
-            ),
-            '0',
-            _t('同步时显示原文内容'),
-            _t('是否在同步消息中包含文章原文内容')
-        );
-        $form->addInput($show_content);
-
         // 内容长度限制
         $content_length = new Typecho_Widget_Helper_Form_Element_Text(
             'content_length',
             NULL,
             '500',
             _t('原文内容长度限制'),
-            _t('当显示原文内容时，限制显示的字数（0表示不限制）')
+            _t('当同步内容模板包含 {content} 时生效，用于限制显示的字数（0表示不限制）')
         );
         $form->addInput($content_length);
 
@@ -196,6 +171,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 {author} - 作者名称<br>
                 {created} - 发布时间<br>
                 {site_name} - 站点名称<br>
+                是否显示原文内容由模板是否包含 {content} 决定<br>
                 留空使用默认模板')
         );
         $form->addInput($content_template);
@@ -307,12 +283,17 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 return $contents;
             }
             
-            // 获取文章内容
-            $postContent = '';
-            if ($pluginOptions->show_content == '1') {
-                $contentLength = intval($pluginOptions->content_length ?? 500);
-                $postContent = FediverseSync_Utils_Template::processContent($contents['text'] ?? '', $contentLength);
-            }
+	            // 获取文章内容（是否包含由模板是否包含 {content} 决定）
+	            $postContent = '';
+	            $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
+	            if (empty($template)) {
+	                $template = FediverseSync_Utils_Template::getDefaultTemplate();
+	            }
+	            if (strpos($template, '{content}') !== false) {
+	                $contentLength = intval($pluginOptions->content_length ?? 500);
+	                $rawContent = $contents['text'] ?? ($post['text'] ?? '');
+	                $postContent = FediverseSync_Utils_Template::processContent($rawContent, $contentLength);
+	            }
 
             // 获取作者信息
             $author = '';
@@ -325,8 +306,6 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             }
 
             // 使用模板工具类处理内容
-            $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
-            
             $templateData = [
                 'title' => $title,
                 'permalink' => $permalink,
@@ -337,11 +316,6 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             ];
             
             $message = FediverseSync_Utils_Template::parse($template, $templateData);
-
-            // 如果启用了显示内容且内容不为空，但模板中没有包含content变量，则在消息末尾添加内容
-            if ($pluginOptions->show_content == '1' && !empty($postContent) && strpos($template, '{content}') === false) {
-                $message .= "\n\n" . $postContent;
-            }
 
             if ($isDebug) {
                 self::log($cid, 'sync', 'debug', '准备发送消息：' . $message);
@@ -386,7 +360,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                     'Authorization: Bearer ' . $access_token,
                     'Content-Type: application/json',
                     'Accept: */*',
-                    'User-Agent: FediverseSync/1.5.3'
+                    'User-Agent: FediverseSync/1.6.1'
                 ];
             }
 
