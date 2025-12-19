@@ -24,7 +24,7 @@ class FediverseSync_Api_Sync
             $instance_url = rtrim($options->instance_url, '/');
             
             // 获取站点名称
-            $siteName = Helper::options()->title;
+            $siteName = FediverseSync_Utils_Template::decodeHtmlEntities(Helper::options()->title);
             
             // 使用模板工具类处理内容（是否包含原文由模板是否包含 {content} 决定）
             $template = $options->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
@@ -34,6 +34,7 @@ class FediverseSync_Api_Sync
 
             // 获取文章内容
             $postContent = '';
+            $rawContent = '';
             if (strpos($template, '{content}') !== false) {
                 $contentLength = intval($options->content_length ?? 500);
                 $rawContent = $contents['text'] ?? ($contents['content'] ?? '');
@@ -46,11 +47,11 @@ class FediverseSync_Api_Sync
                         // ignore and fall back to empty
                     }
                 }
-                $postContent = FediverseSync_Utils_Template::processContent($rawContent, $contentLength);
+                $postContent = FediverseSync_Utils_Template::processMarkdownContent($rawContent, $contentLength);
             }
 
             // 获取作者信息
-            $author = $contents['author'] ?? ($contents['authorName'] ?? '');
+            $author = FediverseSync_Utils_Template::decodeHtmlEntities($contents['author'] ?? ($contents['authorName'] ?? ''));
             if ($author === '' && !empty($contents['cid'])) {
                 try {
                     $db = Typecho_Db::get();
@@ -59,14 +60,14 @@ class FediverseSync_Api_Sync
                         ->join('table.users', 'table.contents.authorId = table.users.uid')
                         ->where('table.contents.cid = ?', $contents['cid'])
                         ->limit(1));
-                    $author = $row['screenName'] ?? '';
+                    $author = FediverseSync_Utils_Template::decodeHtmlEntities($row['screenName'] ?? '');
                 } catch (Exception $e) {
                     // ignore and fall back to empty
                 }
             }
 
             $templateData = [
-                'title' => $contents['title'],
+                'title' => FediverseSync_Utils_Template::decodeHtmlEntities($contents['title']),
                 'permalink' => $contents['permalink'],
                 'content' => $postContent,
                 'author' => $author,
@@ -75,6 +76,24 @@ class FediverseSync_Api_Sync
             ];
             
             $message = FediverseSync_Utils_Template::parse($template, $templateData);
+
+            // Mastodon/GoToSocial：避免超长导致同步失败，优先缩短 {content}
+            if ($instance_type !== 'misskey') {
+                $maxCharacters = 500;
+                if (mb_strlen($message) > $maxCharacters) {
+                    if (strpos($template, '{content}') !== false) {
+                        $baseMessage = FediverseSync_Utils_Template::parse($template, array_merge($templateData, ['content' => '']));
+                        $available = $maxCharacters - mb_strlen($baseMessage);
+                        if ($available > 0) {
+                            $templateData['content'] = FediverseSync_Utils_Template::processMarkdownContent($rawContent ?? '', $available);
+                            $message = FediverseSync_Utils_Template::parse($template, $templateData);
+                        }
+                    }
+                    if (mb_strlen($message) > $maxCharacters) {
+                        $message = FediverseSync_Utils_Template::truncate($message, $maxCharacters, '...');
+                    }
+                }
+            }
 
             // 根据实例类型调用不同的API
             if ($instance_type === 'misskey') {
@@ -122,7 +141,7 @@ class FediverseSync_Api_Sync
             'Authorization: Bearer ' . $access_token,
             'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
             'Accept: application/json',
-            'User-Agent: FediverseSync/1.6.1'
+            'User-Agent: FediverseSync/1.6.4'
         ]);
         
         // 设置超时
@@ -209,7 +228,7 @@ class FediverseSync_Api_Sync
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
             'Accept: application/json',
-            'User-Agent: FediverseSync/1.6.1'
+            'User-Agent: FediverseSync/1.6.4'
         ]);
         
         // 设置超时

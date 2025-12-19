@@ -77,8 +77,8 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
                     if ($archive->have()) {
                         $archive->next();
                         
-                        // 获取站点名称
-                        $siteName = $options->title;
+	                        // 获取站点名称
+	                        $siteName = FediverseSync_Utils_Template::decodeHtmlEntities($options->title);
                         
                         // 使用模板工具类处理内容（是否包含原文由模板是否包含 {content} 决定）
                         $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
@@ -88,14 +88,14 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
 
                         // 获取文章内容
                         $postContent = '';
-                        if (strpos($template, '{content}') !== false) {
-                            $contentLength = intval($pluginOptions->content_length ?? 500);
-                            $rawContent = $archive->text ?? ($archive->content ?? ($post['text'] ?? ''));
-                            $postContent = FediverseSync_Utils_Template::processContent($rawContent, $contentLength);
-                        }
+	                        if (strpos($template, '{content}') !== false) {
+	                            $contentLength = intval($pluginOptions->content_length ?? 500);
+	                            $rawContent = $archive->text ?? ($archive->content ?? ($post['text'] ?? ''));
+	                            $postContent = FediverseSync_Utils_Template::processMarkdownContent($rawContent, $contentLength);
+	                        }
 
-                        // 获取作者信息
-                        $author = $archive->author->screenName ?? '';
+	                        // 获取作者信息
+	                        $author = $archive->author->screenName ?? '';
                         if ($author === '') {
                             $authorId = $post['authorId'] ?? null;
                             if (!empty($authorId)) {
@@ -103,20 +103,39 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
                                     ->from('table.users')
                                     ->where('uid = ?', $authorId)
                                     ->limit(1));
-                                $author = $authorRow['screenName'] ?? '';
-                            }
-                        }
+	                                $author = $authorRow['screenName'] ?? '';
+	                            }
+	                        }
+	                        $author = FediverseSync_Utils_Template::decodeHtmlEntities($author);
 
-                        $templateData = [
-                            'title' => $archive->title,
-                            'permalink' => $archive->permalink,
-                            'content' => $postContent,
-                            'author' => $author,
-                            'created' => date('Y-m-d H:i', $archive->created),
+	                        $templateData = [
+	                            'title' => FediverseSync_Utils_Template::decodeHtmlEntities($archive->title),
+	                            'permalink' => $archive->permalink,
+	                            'content' => $postContent,
+	                            'author' => $author,
+	                            'created' => date('Y-m-d H:i', $archive->created),
                             'site_name' => $siteName
                         ];
                         
                         $content = FediverseSync_Utils_Template::parse($template, $templateData);
+
+                        // Mastodon/GoToSocial：避免超长导致同步失败，优先缩短 {content}
+                        if ($pluginOptions->instance_type !== 'misskey') {
+                            $maxCharacters = 500;
+                            if (mb_strlen($content) > $maxCharacters) {
+	                                if (strpos($template, '{content}') !== false) {
+	                                    $baseMessage = FediverseSync_Utils_Template::parse($template, array_merge($templateData, ['content' => '']));
+	                                    $available = $maxCharacters - mb_strlen($baseMessage);
+	                                    if ($available > 0) {
+	                                        $templateData['content'] = FediverseSync_Utils_Template::processMarkdownContent($rawContent ?? '', $available);
+	                                        $content = FediverseSync_Utils_Template::parse($template, $templateData);
+	                                    }
+	                                }
+                                if (mb_strlen($content) > $maxCharacters) {
+                                    $content = FediverseSync_Utils_Template::truncate($content, $maxCharacters, '...');
+                                }
+                            }
+                        }
 
                         // 发送到 Fediverse
                         $response = $this->postToFediverse($pluginOptions->instance_url, $pluginOptions->access_token, $content);
@@ -227,7 +246,7 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
                 'Authorization: Bearer ' . $token,
                 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
                 'Accept: application/json',
-                'User-Agent: FediverseSync/1.6.1'
+                'User-Agent: FediverseSync/1.6.4'
             );
         }
 

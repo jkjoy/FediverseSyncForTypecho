@@ -159,11 +159,7 @@ function get_posts_for_sync() {
         if ($showContent) {
             $content = strip_tags($post['text'] ?? '');
             $contentLength = intval($pluginOptions->content_length ?? 100);
-            if ($contentLength > 0 && mb_strlen($content) > $contentLength) {
-                $content_preview = mb_substr($content, 0, $contentLength) . '...';
-            } else {
-                $content_preview = $content;
-            }
+            $content_preview = FediverseSync_Utils_Template::truncate($content, $contentLength, '...');
         }
 
         $result[] = [

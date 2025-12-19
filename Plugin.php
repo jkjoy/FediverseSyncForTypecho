@@ -5,7 +5,7 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync
- * @version 1.6.2
+ * @version 1.6.4
  * @author 老孙
  * @link https://www.imsun.org
  */
@@ -105,7 +105,6 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             $db = Typecho_Db::get();
             $prefix = $db->getPrefix();
             $db->query("DROP TABLE IF EXISTS `{$prefix}fediverse_bindings`");
-            $db->query("DROP TABLE IF EXISTS `{$prefix}fediverse_sync_logs`");
             return _t('插件已被禁用，数据表已删除');
         }
         return _t('插件已被禁用，数据表已保留');
@@ -279,8 +278,8 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 return $contents;
             }
 
-            $title = $contents['title'] ?? '';
-            $siteName = $options->title;
+            $title = FediverseSync_Utils_Template::decodeHtmlEntities($contents['title'] ?? '');
+            $siteName = FediverseSync_Utils_Template::decodeHtmlEntities($options->title);
             
             // 获取文章完整信息和固定链接
             $permalink = $class->permalink;
@@ -294,6 +293,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             
 	            // 获取文章内容（是否包含由模板是否包含 {content} 决定）
 	            $postContent = '';
+	            $rawContent = '';
 	            $template = $pluginOptions->content_template ?? FediverseSync_Utils_Template::getDefaultTemplate();
 	            if (empty($template)) {
 	                $template = FediverseSync_Utils_Template::getDefaultTemplate();
@@ -301,7 +301,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
 	            if (strpos($template, '{content}') !== false) {
 	                $contentLength = intval($pluginOptions->content_length ?? 500);
 	                $rawContent = $contents['text'] ?? ($post['text'] ?? '');
-	                $postContent = FediverseSync_Utils_Template::processContent($rawContent, $contentLength);
+	                $postContent = FediverseSync_Utils_Template::processMarkdownContent($rawContent, $contentLength);
 	            }
 
 	            // 获取作者信息
@@ -312,12 +312,12 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
 	                    ->from('table.users')
 	                    ->where('uid = ?', $authorId)
 	                    ->limit(1));
-	                $author = $authorRow['screenName'] ?? '';
+	                $author = FediverseSync_Utils_Template::decodeHtmlEntities($authorRow['screenName'] ?? '');
 	            }
 	            if ($author === '') {
 	                try {
 	                    $user = Typecho_Widget::widget('Widget_User');
-	                    $author = $user->screenName ?? '';
+	                    $author = FediverseSync_Utils_Template::decodeHtmlEntities($user->screenName ?? '');
 	                } catch (Exception $e) {
 	                    // ignore
 	                }
@@ -334,6 +334,24 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
             ];
             
             $message = FediverseSync_Utils_Template::parse($template, $templateData);
+
+            // Mastodon/GoToSocial：避免超长导致同步失败，优先缩短 {content}
+            if ($instance_type !== 'misskey') {
+                $maxCharacters = 500;
+                if (mb_strlen($message) > $maxCharacters) {
+                    if (strpos($template, '{content}') !== false) {
+                        $baseMessage = FediverseSync_Utils_Template::parse($template, array_merge($templateData, ['content' => '']));
+                        $available = $maxCharacters - mb_strlen($baseMessage);
+                        if ($available > 0) {
+                            $templateData['content'] = FediverseSync_Utils_Template::processMarkdownContent($rawContent, $available);
+                            $message = FediverseSync_Utils_Template::parse($template, $templateData);
+                        }
+                    }
+                    if (mb_strlen($message) > $maxCharacters) {
+                        $message = FediverseSync_Utils_Template::truncate($message, $maxCharacters, '...');
+                    }
+                }
+            }
 
             if ($isDebug) {
                 self::log($cid, 'sync', 'debug', '准备发送消息：' . $message);
@@ -378,7 +396,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                     'Authorization: Bearer ' . $access_token,
                     'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
                     'Accept: application/json',
-                    'User-Agent: FediverseSync/1.6.1'
+                    'User-Agent: FediverseSync/1.6.4'
                 ];
             }
 
