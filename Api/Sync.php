@@ -50,7 +50,20 @@ class FediverseSync_Api_Sync
             }
 
             // 获取作者信息
-            $author = $contents['author'] ?? '';
+            $author = $contents['author'] ?? ($contents['authorName'] ?? '');
+            if ($author === '' && !empty($contents['cid'])) {
+                try {
+                    $db = Typecho_Db::get();
+                    $row = $db->fetchRow($db->select('table.users.screenName')
+                        ->from('table.contents')
+                        ->join('table.users', 'table.contents.authorId = table.users.uid')
+                        ->where('table.contents.cid = ?', $contents['cid'])
+                        ->limit(1));
+                    $author = $row['screenName'] ?? '';
+                } catch (Exception $e) {
+                    // ignore and fall back to empty
+                }
+            }
 
             $templateData = [
                 'title' => $contents['title'],
@@ -104,10 +117,10 @@ class FediverseSync_Api_Sync
         curl_setopt($ch, CURLOPT_URL, $api_url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post_data));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($post_data));
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Authorization: Bearer ' . $access_token,
-            'Content-Type: application/json',
+            'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
             'Accept: application/json',
             'User-Agent: FediverseSync/1.6.1'
         ]);

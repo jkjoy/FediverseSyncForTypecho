@@ -295,15 +295,24 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
 	                $postContent = FediverseSync_Utils_Template::processContent($rawContent, $contentLength);
 	            }
 
-            // 获取作者信息
-            $author = '';
-            if (isset($contents['authorId'])) {
-                $authorRow = $db->fetchRow($db->select('screenName')
-                    ->from('table.users')
-                    ->where('uid = ?', $contents['authorId'])
-                    ->limit(1));
-                $author = $authorRow['screenName'] ?? '';
-            }
+	            // 获取作者信息
+	            $author = '';
+	            $authorId = $contents['authorId'] ?? ($post['authorId'] ?? null);
+	            if (!empty($authorId)) {
+	                $authorRow = $db->fetchRow($db->select('screenName')
+	                    ->from('table.users')
+	                    ->where('uid = ?', $authorId)
+	                    ->limit(1));
+	                $author = $authorRow['screenName'] ?? '';
+	            }
+	            if ($author === '') {
+	                try {
+	                    $user = Typecho_Widget::widget('Widget_User');
+	                    $author = $user->screenName ?? '';
+	                } catch (Exception $e) {
+	                    // ignore
+	                }
+	            }
 
             // 使用模板工具类处理内容
             $templateData = [
@@ -358,8 +367,8 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 
                 $headers = [
                     'Authorization: Bearer ' . $access_token,
-                    'Content-Type: application/json',
-                    'Accept: */*',
+                    'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
+                    'Accept: application/json',
                     'User-Agent: FediverseSync/1.6.1'
                 ];
             }
@@ -369,7 +378,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                 CURLOPT_URL => $api_url,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => json_encode($post_data),
+                CURLOPT_POSTFIELDS => ($instance_type === 'misskey') ? json_encode($post_data) : http_build_query($post_data),
                 CURLOPT_HTTPHEADER => $headers
             ]);
             

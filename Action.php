@@ -96,6 +96,16 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
 
                         // 获取作者信息
                         $author = $archive->author->screenName ?? '';
+                        if ($author === '') {
+                            $authorId = $post['authorId'] ?? null;
+                            if (!empty($authorId)) {
+                                $authorRow = $this->db->fetchRow($this->db->select('screenName')
+                                    ->from('table.users')
+                                    ->where('uid = ?', $authorId)
+                                    ->limit(1));
+                                $author = $authorRow['screenName'] ?? '';
+                            }
+                        }
 
                         $templateData = [
                             'title' => $archive->title,
@@ -215,8 +225,8 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
             
             $headers = array(
                 'Authorization: Bearer ' . $token,
-                'Content-Type: application/json',
-                'Accept: */*',
+                'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
+                'Accept: application/json',
                 'User-Agent: FediverseSync/1.6.1'
             );
         }
@@ -227,7 +237,7 @@ class FediverseSync_Action extends Typecho_Widget implements Widget_Interface_Do
             CURLOPT_POST => true,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_POSTFIELDS => json_encode($data)
+            CURLOPT_POSTFIELDS => ($instance_type === 'misskey') ? json_encode($data) : http_build_query($data)
         ));
         
         // 设置超时
