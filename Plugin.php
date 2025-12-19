@@ -5,12 +5,39 @@ if (!defined('__TYPECHO_ROOT_DIR__')) exit;
  * 将新文章自动同步到 Mastodon/GoToSocial/Misskey 实例
  * 
  * @package FediverseSync
- * @version 1.6.1
+ * @version 1.6.2
  * @author 老孙
  * @link https://www.imsun.org
  */
 class FediverseSync_Plugin implements Typecho_Plugin_Interface
 {
+    private static function getFileLogPath()
+    {
+        return rtrim(__TYPECHO_ROOT_DIR__, '/\\') . '/usr/logs/fediverse-sync.log';
+    }
+
+    private static function appendFileLog($post_id, $action, $status, $message)
+    {
+        $logFile = self::getFileLogPath();
+        $logDir = dirname($logFile);
+
+        if (!is_dir($logDir)) {
+            @mkdir($logDir, 0755, true);
+        }
+
+        $safeMessage = str_replace(["\r\n", "\r", "\n"], ['\\n', '\\n', '\\n'], (string)$message);
+        $line = sprintf(
+            "[%s] post_id=%d action=%s status=%s message=%s\n",
+            date('c'),
+            (int)$post_id,
+            (string)$action,
+            (string)$status,
+            $safeMessage
+        );
+
+        @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
+    }
+
     public static function activate()
     {
         $db = Typecho_Db::get();
@@ -30,16 +57,6 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                     UNIQUE KEY `uk_post_id` (`post_id`),
                     KEY `idx_toot_id` (`toot_id`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
-                "CREATE TABLE IF NOT EXISTS `{$prefix}fediverse_sync_logs` (
-                    `id` bigint(20) NOT NULL AUTO_INCREMENT,
-                    `post_id` bigint(20) NOT NULL DEFAULT 0,
-                    `action` varchar(50) NOT NULL,
-                    `status` varchar(20) NOT NULL,
-                    `message` text,
-                    `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (`id`),
-                    KEY `idx_post_id` (`post_id`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;"
             ];
         } else {
             $sqls = [
@@ -51,14 +68,6 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
                     `instance_url` VARCHAR(255) NOT NULL,
                     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );",
-                "CREATE TABLE IF NOT EXISTS `{$prefix}fediverse_sync_logs` (
-                    `id` INTEGER PRIMARY KEY AUTOINCREMENT,
-                    `post_id` INTEGER NOT NULL DEFAULT 0,
-                    `action` VARCHAR(50) NOT NULL,
-                    `status` VARCHAR(20) NOT NULL,
-                    `message` TEXT,
-                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                );"
             ];
         }
 
@@ -67,7 +76,7 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
 	                $db->query($sql);
 	            }
 	            // 再次检测表是否存在：用 Typecho 的 table.* 语法，避免不同数据库的元数据表差异
-	            foreach (['fediverse_bindings', 'fediverse_sync_logs'] as $table) {
+	            foreach (['fediverse_bindings'] as $table) {
 	                try {
 	                    $db->fetchRow($db->select()->from('table.' . $table)->limit(1));
 	                } catch (Typecho_Db_Exception $e) {
@@ -482,16 +491,12 @@ class FediverseSync_Plugin implements Typecho_Plugin_Interface
     public static function log($post_id, $action, $status, $message)
     {
         try {
-            $db = Typecho_Db::get();
-            $data = [
-                'post_id' => (int)$post_id,
-                'action' => $action,
-                'status' => $status,
-                'message' => $message
-            ];
-            $db->query($db->insert('table.fediverse_sync_logs')->rows($data));
+            $options = Helper::options()->plugin('FediverseSync');
+            if (($options->debug_mode ?? '0') == '1' || $status === 'error') {
+                self::appendFileLog($post_id, $action, $status, $message);
+            }
         } catch (Exception $e) {
-            error_log('FediverseSync Log Error: ' . $e->getMessage());
+            // ignore file log errors
         }
     }
 

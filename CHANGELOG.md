@@ -1,5 +1,11 @@
 # Fediverse Sync for Typecho - 更新日志
 
+## 版本 1.6.2 (2025-12-19)
+
+### 行为调整
+- 移除数据库日志表写入：不再写入 `{前缀}fediverse_sync_logs`
+- 日志改为写入 `usr/logs/fediverse-sync.log`（错误日志始终记录，调试模式记录更多信息）
+
 ## 版本 1.6.1 (2025-12-19)
 
 ### 行为调整
